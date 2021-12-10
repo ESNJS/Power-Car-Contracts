@@ -2,67 +2,29 @@
 
 pragma solidity ^0.8.0;
 
-abstract contract Context {
-    function _msgSender() internal view virtual returns (address) {
-        return msg.sender;
-    }
-
-    function _msgData() internal view virtual returns (bytes calldata) {
-        return msg.data;
-    }
-}
-
-abstract contract Ownable is Context {
+abstract contract Ownable {
     address private _owner;
 
     event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
 
-    /**
-     * @dev Initializes the contract setting the deployer as the initial owner.
-     */
     constructor() {
-        _transferOwnership(_msgSender());
+        _transferOwnership(msg.sender);
     }
 
-    /**
-     * @dev Returns the address of the current owner.
-     */
     function owner() public view virtual returns (address) {
         return _owner;
     }
 
-    /**
-     * @dev Throws if called by any account other than the owner.
-     */
     modifier onlyOwner() {
-        require(owner() == _msgSender(), "Ownable: caller is not the owner");
+        require(owner() == msg.sender, "Ownable: caller is not the owner");
         _;
     }
 
-    /**
-     * @dev Leaves the contract without owner. It will not be possible to call
-     * `onlyOwner` functions anymore. Can only be called by the current owner.
-     *
-     * NOTE: Renouncing ownership will leave the contract without an owner,
-     * thereby removing any functionality that is only available to the owner.
-     */
-    function renounceOwnership() public virtual onlyOwner {
-        _transferOwnership(address(0));
-    }
-
-    /**
-     * @dev Transfers ownership of the contract to a new account (`newOwner`).
-     * Can only be called by the current owner.
-     */
     function transferOwnership(address newOwner) public virtual onlyOwner {
         require(newOwner != address(0), "Ownable: new owner is the zero address");
         _transferOwnership(newOwner);
     }
 
-    /**
-     * @dev Transfers ownership of the contract to a new account (`newOwner`).
-     * Internal function without access restriction.
-     */
     function _transferOwnership(address newOwner) internal virtual {
         address oldOwner = _owner;
         _owner = newOwner;
@@ -119,7 +81,7 @@ interface INFT {
     function bidOf(uint256 _tokenId) external view returns (uint256 price, address payable bidder, uint256 timestamp);
     function getTokenProperties(uint256 _tokenId) external view returns (Properties memory);
     
-    function setBid(uint256 _tokenId, uint256 _amountInWEI, bytes calldata _data) payable external returns (bool);
+    function setBid(uint256 _tokenId, uint256 _amountInWEI) payable external returns (bool);
     function withdrawBid(uint256 _tokenId) external returns (bool);
 }
 
@@ -130,10 +92,49 @@ abstract contract NFTReceiver {
 contract RallySoy is INFT, Ownable{
     
     using Address for address;
-    
+
+    //Rally Events
+    event Sent(address indexed payee, uint256 amount);
+    event RaceWinner(address winner, uint256 timeOne, uint256 timeTwo);
+
+    //NFT Events
     event Transfer     (address indexed from, address indexed to, uint256 indexed tokenId);
     event TransferData (bytes data);
-    
+
+    //Rally Variables
+    uint256 public start; //When the season starts.
+    uint256 public end; //When the season ends.
+    uint256 public seasonJackpot;
+    uint256 public ticketBalance;                       //Balance from ticket sales
+    uint256 public ticketPrice;  //Amount paid for racing (in WEI)
+    address public car_address;
+    uint256 public season;
+    enum State {Ready, Set, Go}
+    mapping (uint256 => State) public carState;
+
+    struct Rally {
+        uint256 carOne;
+        uint256 carTwo;
+        uint256 carThree;
+        uint256 carFour;
+        uint256 carFive;
+        uint256 raceBalance;
+    }
+
+    struct SeasonWinners {
+        uint256 first;
+        uint256 second;
+        uint256 third;
+        uint256 seasonBalance;
+        mapping (uint256 => uint256) seasonPoints; //Winner: 2points. Tie: 1points.
+    }
+
+    mapping (uint256 => Rally) public rallies;
+    mapping (uint256 => uint256) public bonusMultiplier;
+    mapping (uint256 => SeasonWinners) public seasonHistory; 
+    mapping (address => uint256) public racerBalance;
+
+    //NFT Variables
     mapping (uint256 => Properties) private _tokenProperties;
     mapping (uint32 => Fee)         public feeLevels; // level # => (fee receiver, fee percentage)
     
@@ -171,13 +172,25 @@ contract RallySoy is INFT, Ownable{
     /**
      * @dev Initializes the contract by setting a `name` and a `symbol` to the token collection.
      */
-    constructor(string memory name_, string memory symbol_, uint256 _defaultFee) {
+    constructor(string memory name_, string memory symbol_, uint256 _defaultFee, address _CARaddress) {
         _name   = name_;
         _symbol = symbol_;
         feeLevels[0].feeReceiver   = payable(msg.sender);
         feeLevels[0].feePercentage = _defaultFee;
+
+        car_address = _CARaddress;
+        ticketPrice = 50000000000000000000;
+
+        _beforeTokenTransfer(address(0), msg.sender, 0);
+        _balances[msg.sender] += 1;
+        _owners[0] = msg.sender;
+        emit Transfer(address(0), msg.sender, 0);
+
+        //falta el link a la imagen.
     }
-    
+
+    receive() external payable onlyOwner{}
+
     modifier checkTrade(uint256 _tokenId)
     {
         _;
@@ -198,7 +211,7 @@ contract RallySoy is INFT, Ownable{
     
     function standard() public view virtual override returns (string memory)
     {
-        return "NFT X";
+        return "NFT RALLY SOY";
     }
     
     function priceOf(uint256 _tokenId) public view virtual override returns (uint256)
@@ -238,7 +251,7 @@ contract RallySoy is INFT, Ownable{
         return true;
     }
     
-    function setBid(uint256 _tokenId, uint256 _amountInWEI, bytes calldata _data) payable checkTrade(_tokenId) public virtual override returns (bool)
+    function setBid(uint256 _tokenId, uint256 _amountInWEI) payable checkTrade(_tokenId) public virtual override returns (bool)
     {
         (uint256 _previousBid, address payable _previousBidder, ) = bidOf(_tokenId);
         require(msg.value == _amountInWEI, "Wrong payment value provided");
@@ -305,37 +318,6 @@ contract RallySoy is INFT, Ownable{
         return _feeAmount;        
     }
     
-    function _safeMint(
-        address to,
-        uint256 tokenId
-    ) internal virtual {
-        _mint(to, tokenId);
-    }
-    
-    function _mint(address to, uint256 tokenId) internal virtual {
-        require(to != address(0), "NFT: mint to the zero address");
-        require(!_exists(tokenId), "NFT: token already minted");
-
-        _beforeTokenTransfer(address(0), to, tokenId);
-
-        _balances[to] += 1;
-        _owners[tokenId] = to;
-
-        emit Transfer(address(0), to, tokenId);
-    }
-    
-    function _burn(uint256 tokenId) internal virtual {
-        address owner = RallySoy.ownerOf(tokenId);
-
-        _beforeTokenTransfer(owner, address(0), tokenId);
-        
-
-        _balances[owner] -= 1;
-        delete _owners[tokenId];
-
-        emit Transfer(owner, address(0), tokenId);
-    }
-    
     function _transfer(
         address from,
         address to,
@@ -369,4 +351,179 @@ contract RallySoy is INFT, Ownable{
         address to,
         uint256 tokenId
     ) internal virtual {}
+
+    //Custom Code
+    function setFeeReceiver (address _address) public onlyOwner {
+        feeLevels[0].feeReceiver   = payable(_address);
+    }
+
+    function setFeeReceiver (uint256 tokenId, uint256 _bonusMultiplier) public onlyOwner {
+        bonusMultiplier[tokenId] = _bonusMultiplier;
+    }
+
+    function _getCarBonus(uint256 tokenId) internal view returns (uint256){
+        CAR car = CAR(car_address);
+        return car.carBonus(tokenId);
+    }
+
+    function carOwner(uint256 tokenId) internal view returns (address owner){
+        iCAR icar = iCAR(car_address);
+        return icar.ownerOf(tokenId);
+    }
+
+    function carStateReady(uint256 tokenId) internal{
+        require(carState[tokenId] != State.Ready);
+        carState[tokenId] = State.Ready;
+    }
+    
+    function carStateSet(uint256 tokenId) internal{
+        require(carState[tokenId] == State.Ready);
+        carState[tokenId] = State.Set;
+    }
+    
+    function carStateGo(uint256 tokenId) internal{
+        require(carState[tokenId] == State.Set);
+        carState[tokenId] = State.Go;
+    }
+
+    function claimRaceBalance () public{
+            uint256 toPay = racerBalance[msg.sender];
+            racerBalance[msg.sender] = 0;
+            payable(msg.sender).transfer(toPay);
+            emit Sent(msg.sender, toPay);
+    }
+
+    function createRally(uint256 carOne) payable public {
+        require(carState[carOne] == State.Ready, "This CAR is not able to RUN");
+        require(carOwner(carOne) == msg.sender, "CAR: caller is not owner");
+        require(msg.value >= ticketPrice);
+        seasonHistory[season].seasonBalance += ticketPrice/10;
+        ticketBalance += ticketPrice - ticketPrice/10;
+        rallies[carOne].raceBalance += (msg.value - ticketPrice);
+        carStateSet(carOne);
+        rallies[carOne].carOne = carOne;
+    }
+
+    function acceptRally(uint256 carOne, uint256 carTwo) payable public {
+        require(carState[carOne] == State.Ready, "This CAR is not able to RUN");
+        require(carOwner(carOne) == msg.sender, "CAR: caller is not owner");
+        require(carOwner(carOne) != msg.sender, "Can not compit against you");
+        require(carState[carOne] == State.Set, "Your opponent is not ready to race");
+        require(msg.value >= ticketPrice + rallies[carOne].raceBalance, "The bet should be equal to your opponenst bet");
+        seasonHistory[season].seasonBalance += ticketPrice/10;
+        ticketBalance += ticketPrice - ticketPrice/10;
+        rallies[carOne].raceBalance += (msg.value - ticketPrice);
+        carStateSet(carTwo);
+        rallies[carOne].carTwo = carTwo;
+        startRally(carOne);
+    }
+
+    function cancelRally(uint256 carOne) public {
+        require(carState[carOne] == State.Set, "This CAR is not able to RUN");
+        require(carOwner(carOne) == msg.sender, "CAR: caller is not owner");
+        carStateReady(carOne);
+        racerBalance[msg.sender] += rallies[carOne].raceBalance;
+        delete rallies[carOne];
+    }
+
+    function startRally (uint256 raceID) internal {
+
+        uint256 _carOne = rallies[raceID].carOne;
+        uint256 _carTwo = rallies[raceID].carTwo;   
+        uint256 carOneTime;
+        uint256 carTwoTime;
+        address _winner;
+
+        carStateGo(_carOne);
+        carStateGo(_carTwo);
+
+        carOneTime   = uint256(keccak256(abi.encodePacked(block.timestamp, block.difficulty, _carTwo)))%51; 
+        carTwoTime   = uint256(keccak256(abi.encodePacked(block.timestamp, block.difficulty, _carOne)))%51;
+
+        //Apply carBonus
+        carOneTime   += _getCarBonus(_carOne) * bonusMultiplier[_carOne];
+        carTwoTime   += _getCarBonus(_carTwo) * bonusMultiplier[_carTwo];
+
+        if(carOneTime > carTwoTime){ //CarTwo Wins
+            racerBalance[carOwner(_carTwo)] += rallies[raceID].raceBalance;
+            _winner = carOwner(_carTwo);
+            seasonHistory[season].seasonPoints[_carTwo] += 2;
+        }
+        if(carOneTime < carTwoTime){ //CarTwo One
+            racerBalance[carOwner(_carOne)] += rallies[raceID].raceBalance;
+            _winner = carOwner(_carOne);
+            seasonHistory[season].seasonPoints[_carOne] += 2;
+        }
+
+        //Tie.
+        if(carOneTime == carTwoTime){ 
+            racerBalance[carOwner(_carOne)] += rallies[raceID].raceBalance/2;
+            racerBalance[carOwner(_carTwo)] += rallies[raceID].raceBalance/2;
+            seasonHistory[season].seasonPoints[_carOne] += 1;
+            seasonHistory[season].seasonPoints[_carTwo] += 1;
+        }
+        
+       
+        delete rallies[raceID];
+        carStateReady(_carOne);
+        carStateReady(_carTwo);
+        
+        emit RaceWinner(_winner, carOneTime, carTwoTime);
+    }
+
+    function getCallistos() public{
+        uint256 toPay = ticketBalance;
+        ticketBalance = 0;
+        payable(ownerOf(0)).transfer(toPay);
+        emit Sent(ownerOf(0), toPay);
+    }
+
+    //seasonPoints  
+
+    function setTicketPrice (uint256 _amoutInWEI) public {
+        require(ownerOf(0) == msg.sender, "You are not the Rally Owner"); 
+        require(_amoutInWEI >= 50000000000000000000 && _amoutInWEI <= 100000000000000000000, "Price goes from 50 to 100");
+        ticketPrice = _amoutInWEI; //50000000000000000000
+    }
+
+    function actualBlock() public view returns (uint256 block_number){
+        return block_number = block.number;
+    }
+
+    function startSeason() public{
+        require(ownerOf(0) == msg.sender, "You are not the Rally Owner"); 
+        start = block.timestamp;
+        end = start + 7 days;
+    }
+
+    function sortWinner(uint256 car) internal {
+        if(seasonHistory[season].seasonPoints[car] > seasonHistory[season].seasonPoints[seasonHistory[season].first]){
+            seasonHistory[season].third = seasonHistory[season].second;
+            seasonHistory[season].second = seasonHistory[season].first;
+            seasonHistory[season].first = car;
+        }else{
+            if(seasonHistory[season].seasonPoints[car] > seasonHistory[season].seasonPoints[seasonHistory[season].second]){
+                seasonHistory[season].third = seasonHistory[season].second;
+                seasonHistory[season].second = car;
+            }else{
+                if(seasonHistory[season].seasonPoints[car] > seasonHistory[season].seasonPoints[seasonHistory[season].third]){
+                    seasonHistory[season].third = car;
+                }
+            }
+        }
+    }
+
+    function endSeason() public{
+        require(ownerOf(0) == msg.sender, "You are not the Rally Owner"); 
+        require(block.timestamp > end);
+
+        //repartir seasonBalance entre los ganadores
+        racerBalance[carOwner(seasonHistory[season].first)] += seasonHistory[season].seasonBalance/2;
+        racerBalance[carOwner(seasonHistory[season].second)] += seasonHistory[season].seasonBalance/4;
+        racerBalance[carOwner(seasonHistory[season].third)] += seasonHistory[season].seasonBalance/4;
+        season ++;
+    }
+
+
+
 }
