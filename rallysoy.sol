@@ -521,6 +521,7 @@ contract RallySoy is INFT, Ownable{
         require(block.timestamp > end);
         end = block.timestamp + 7 days;
         setTicketPrice(_amoutInWEI);
+        seasonHistory[season].seasonStarted = true;
     }
 
     function endSeason() public{
