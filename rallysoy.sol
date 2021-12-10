@@ -110,9 +110,6 @@ contract RallySoy is INFT, Ownable{
     struct Rally {
         uint256 carOne;
         uint256 carTwo;
-        uint256 carThree;
-        uint256 carFour;
-        uint256 carFive;
         uint256 raceBalance;
     }
 
@@ -121,6 +118,7 @@ contract RallySoy is INFT, Ownable{
         uint256 second;
         uint256 third;
         uint256 seasonBalance;
+        bool seasonStarted;
         mapping (uint256 => uint256) seasonPoints; //Winner: 2points. Tie: 1points.
     }
 
@@ -354,7 +352,7 @@ contract RallySoy is INFT, Ownable{
         feeLevels[0].feeReceiver   = payable(_address);
     }
 
-    function setFeeReceiver (uint256 tokenId, uint256 _bonusMultiplier) public onlyOwner {
+    function setBonusMultiplier (uint256 tokenId, uint256 _bonusMultiplier) public onlyOwner {
         bonusMultiplier[tokenId] = _bonusMultiplier;
     }
 
@@ -395,22 +393,31 @@ contract RallySoy is INFT, Ownable{
         require(carOwner(carOne) == msg.sender, "CAR: caller is not owner");
         require(msg.value >= ticketPrice);
         rallyTotalEarnings += ticketPrice;
-        seasonHistory[season].seasonBalance += ticketPrice/10;
-        ticketBalance += ticketPrice - ticketPrice/10;
+        if(seasonHistory[season].seasonStarted){
+            seasonHistory[season].seasonBalance += ticketPrice/10;
+            ticketBalance += ticketPrice - ticketPrice/10;
+        }else{
+            ticketBalance += ticketPrice - ticketPrice;
+        }
+
         rallies[carOne].raceBalance += (msg.value - ticketPrice);
         carStateSet(carOne);
         rallies[carOne].carOne = carOne;
     }
 
     function acceptRally(uint256 carOne, uint256 carTwo) payable public {
-        require(carState[carOne] == State.Ready, "This CAR is not able to RUN");
+        require(carState[carTwo] == State.Ready, "This CAR is not able to RUN");
         require(carOwner(carOne) == msg.sender, "CAR: caller is not owner");
         require(carOwner(carOne) != msg.sender, "Can not compit against you");
         require(carState[carOne] == State.Set, "Your opponent is not ready to race");
         require(msg.value >= ticketPrice + rallies[carOne].raceBalance, "The bet should be equal to your opponenst bet");
         rallyTotalEarnings += ticketPrice;
-        seasonHistory[season].seasonBalance += ticketPrice/10;
-        ticketBalance += ticketPrice - ticketPrice/10;
+        if(seasonHistory[season].seasonStarted){
+            seasonHistory[season].seasonBalance += ticketPrice/10;
+            ticketBalance += ticketPrice - ticketPrice/10;
+        }else{
+            ticketBalance += ticketPrice - ticketPrice;
+        }
         rallies[carOne].raceBalance += (msg.value - ticketPrice);
         carStateSet(carTwo);
         rallies[carOne].carTwo = carTwo;
