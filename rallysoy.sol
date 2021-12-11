@@ -536,7 +536,7 @@ contract RallySoy is INFT, Ownable{
     function startSeason(uint256 _amoutInWEI) public{
         require(ownerOf(0) == msg.sender, "You are not the Rally Owner"); 
         require(block.timestamp > end && !seasonHistory[season].seasonStarted);
-        end = block.timestamp + 1 hours;//Change to 7 days when sending to prod.
+        end = block.timestamp + 7 days;
         setTicketPrice(_amoutInWEI);
         seasonHistory[season].seasonStarted = true;
     }
