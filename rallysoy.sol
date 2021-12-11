@@ -173,7 +173,6 @@ contract RallySoy is INFT, Ownable{
         car_address = _CARaddress;
         ticketPrice = 1000000000000000000;
 
-        _beforeTokenTransfer(address(0), msg.sender, 0);
         _balances[msg.sender] += 1;
         _owners[0] = msg.sender;
         tokenImage = _tokenImage;
@@ -331,20 +330,12 @@ contract RallySoy is INFT, Ownable{
         // because we assume that the bidder still wants to buy the NFT
         // no matter from whom.
 
-        _beforeTokenTransfer(from, to, tokenId);
-
         _balances[from] -= 1;
         _balances[to] += 1;
         _owners[tokenId] = to;
 
         emit Transfer(from, to, tokenId);
     }
-    
-    function _beforeTokenTransfer(
-        address from,
-        address to,
-        uint256 tokenId
-    ) internal virtual {}
 
     //Custom Code
     function setFeeReceiver (address _address) public onlyOwner {
@@ -355,9 +346,13 @@ contract RallySoy is INFT, Ownable{
         bonusMultiplier[tokenId] = _bonusMultiplier;
     }
 
-    function _getCarBonus(uint256 tokenId) internal view returns (uint256){
+    function _getCarBonus(uint256 tokenId) public view returns (uint256){
         CAR car = CAR(car_address);
         return car.carBonus(tokenId) * bonusMultiplier[tokenId];
+    }
+
+    function _getSeasonPoints(uint256 _season, uint256 tokenId) public view returns (uint256){
+        return seasonHistory[_season].seasonPoints[tokenId];
     }
 
     function carOwner(uint256 tokenId) internal view returns (address owner){
@@ -381,22 +376,24 @@ contract RallySoy is INFT, Ownable{
     }
 
     function claimRaceBalance () public{
-            uint256 toPay = racerBalance[msg.sender];
-            racerBalance[msg.sender] = 0;
-            payable(msg.sender).transfer(toPay);
-            emit Sent(msg.sender, toPay);
+        uint256 toPay = racerBalance[msg.sender];
+        racerBalance[msg.sender] = 0;
+        payable(msg.sender).transfer(toPay);
+        emit Sent(msg.sender, toPay);
     }
 
     function createRally(uint256 carOne) payable public {
         require(carState[carOne] == State.Ready, "This CAR is not able to RUN");
         require(carOwner(carOne) == msg.sender, "CAR: caller is not owner");
         require(msg.value >= ticketPrice, "You should al least pay the ticket price");
-        rallyTotalEarnings += ticketPrice;
+        
         if(seasonHistory[season].seasonStarted){
             seasonHistory[season].seasonBalance += ticketPrice/10;
             ticketBalance += ticketPrice - ticketPrice/10;
+            rallyTotalEarnings += ticketPrice - ticketPrice/10;
         }else{
-            ticketBalance += ticketPrice - ticketPrice;
+            ticketBalance += ticketPrice;
+            rallyTotalEarnings += ticketPrice;
         }
 
         rallies[carOne].raceBalance += (msg.value - ticketPrice);
@@ -410,12 +407,13 @@ contract RallySoy is INFT, Ownable{
         require(carOwner(carOne) != msg.sender, "Can not compete against you");
         require(carState[carOne] == State.Set, "Your opponent is not ready to race");
         require(msg.value >= ticketPrice + rallies[carOne].raceBalance, "The bet should be equal to your opponenst bet plus ticket price");
-        rallyTotalEarnings += ticketPrice;
         if(seasonHistory[season].seasonStarted){
             seasonHistory[season].seasonBalance += ticketPrice/10;
             ticketBalance += ticketPrice - ticketPrice/10;
+            rallyTotalEarnings += ticketPrice - ticketPrice/10;
         }else{
-            ticketBalance += ticketPrice - ticketPrice;
+            ticketBalance += ticketPrice;
+            rallyTotalEarnings += ticketPrice;
         }
         rallies[carOne].raceBalance += (msg.value - ticketPrice);
         carStateSet(carTwo);
@@ -446,13 +444,13 @@ contract RallySoy is INFT, Ownable{
         carTwoTime   = uint256(keccak256(abi.encodePacked(block.timestamp, block.difficulty, _carOne)))%51;
 
         //Apply carBonus
-        carOneTime   += _getCarBonus(_carOne);
-        carTwoTime   += _getCarBonus(_carTwo);
+        carOneTime   += _getCarBonus(_carTwo);
+        carTwoTime   += _getCarBonus(_carOne);
 
         if(carOneTime > carTwoTime){ //CarTwo Wins
             racerBalance[carOwner(_carTwo)] += rallies[raceID].raceBalance;
             _winner = carOwner(_carTwo);
-            if(seasonHistory[season].seasonStarted){
+            if(seasonHistory[season].seasonStarted && block.timestamp > end){
                 seasonHistory[season].seasonPoints[_carTwo] += 3;
                 sortWinner(_carTwo);
             }
@@ -461,7 +459,7 @@ contract RallySoy is INFT, Ownable{
         if(carOneTime < carTwoTime){ //CarTwo One
             racerBalance[carOwner(_carOne)] += rallies[raceID].raceBalance;
             _winner = carOwner(_carOne);
-            if(seasonHistory[season].seasonStarted){
+            if(seasonHistory[season].seasonStarted && block.timestamp > end){
                 seasonHistory[season].seasonPoints[_carOne] += 3;
                 sortWinner(_carOne);
             }
@@ -471,7 +469,7 @@ contract RallySoy is INFT, Ownable{
         if(carOneTime == carTwoTime){ 
             racerBalance[carOwner(_carOne)] += rallies[raceID].raceBalance/2;
             racerBalance[carOwner(_carTwo)] += rallies[raceID].raceBalance/2;
-            if(seasonHistory[season].seasonStarted){
+            if(seasonHistory[season].seasonStarted && block.timestamp > end){
                 seasonHistory[season].seasonPoints[_carOne] += 1;
                 seasonHistory[season].seasonPoints[_carTwo] += 1;
                 sortWinner(_carOne);
@@ -495,26 +493,38 @@ contract RallySoy is INFT, Ownable{
         emit Sent(ownerOf(0), toPay);
     }
 
-    //seasonPoints  
-
     function setTicketPrice (uint256 _amoutInWEI) internal {
         require(ownerOf(0) == msg.sender, "You are not the Rally Owner"); 
         require(_amoutInWEI >= 50000000000000000000 && _amoutInWEI <= 100000000000000000000, "Price goes from 50 to 100");
         ticketPrice = _amoutInWEI; //50000000000000000000
     }
 
-    function actualBlock() public view returns (uint256 block_number){
-        return block_number = block.number;
-    }
-
-
-
     function sortWinner(uint256 _car) internal {
-        if(seasonHistory[season].seasonPoints[_car] > seasonHistory[season].seasonPoints[seasonHistory[season].third]){
-            seasonHistory[season].third = _car;
-            if(seasonHistory[season].seasonPoints[_car] > seasonHistory[season].seasonPoints[seasonHistory[season].second]){
-                seasonHistory[season].third = seasonHistory[season].second;
-                seasonHistory[season].second = _car;
+        if(_car != seasonHistory[season].first){ //It is not the first
+            if(_car != seasonHistory[season].second){ //It is not the second
+                if(_car != seasonHistory[season].third){ //It is not the third
+                    if(seasonHistory[season].seasonPoints[_car] > seasonHistory[season].seasonPoints[seasonHistory[season].third]){
+                        seasonHistory[season].third = _car;
+                        if(seasonHistory[season].seasonPoints[_car] > seasonHistory[season].seasonPoints[seasonHistory[season].second]){
+                            seasonHistory[season].third = seasonHistory[season].second;
+                            seasonHistory[season].second = _car;
+                            if(seasonHistory[season].seasonPoints[_car] > seasonHistory[season].seasonPoints[seasonHistory[season].first]){
+                                seasonHistory[season].second = seasonHistory[season].first;
+                                seasonHistory[season].first = _car;
+                            }
+                        }
+                    }
+                }else{//It is the third so we compare against the first and the second.
+                    if(seasonHistory[season].seasonPoints[_car] > seasonHistory[season].seasonPoints[seasonHistory[season].second]){
+                        seasonHistory[season].third = seasonHistory[season].second;
+                        seasonHistory[season].second = _car;
+                        if(seasonHistory[season].seasonPoints[_car] > seasonHistory[season].seasonPoints[seasonHistory[season].first]){
+                            seasonHistory[season].second = seasonHistory[season].first;
+                            seasonHistory[season].first = _car;
+                        }
+                    }
+                } 
+            }else{ //It is the second so we compare against the first.
                 if(seasonHistory[season].seasonPoints[_car] > seasonHistory[season].seasonPoints[seasonHistory[season].first]){
                     seasonHistory[season].second = seasonHistory[season].first;
                     seasonHistory[season].first = _car;
@@ -525,30 +535,27 @@ contract RallySoy is INFT, Ownable{
 
     function startSeason(uint256 _amoutInWEI) public{
         require(ownerOf(0) == msg.sender, "You are not the Rally Owner"); 
-        require(block.timestamp > end);
-        end = block.timestamp + 7 days;
+        require(block.timestamp > end && !seasonHistory[season].seasonStarted);
+        end = block.timestamp + 1 hours;//Change to 7 days when sending to prod.
         setTicketPrice(_amoutInWEI);
         seasonHistory[season].seasonStarted = true;
     }
 
     function endSeason() public{
         require(ownerOf(0) == msg.sender, "You are not the Rally Owner"); 
-        require(block.timestamp > end);
+        require(block.timestamp > end && seasonHistory[season].seasonStarted);
 
         racerBalance[carOwner(seasonHistory[season].first)] += seasonHistory[season].seasonBalance/2;
         racerBalance[carOwner(seasonHistory[season].second)] += seasonHistory[season].seasonBalance/4;
         racerBalance[carOwner(seasonHistory[season].third)] += seasonHistory[season].seasonBalance/4;
         season ++;
         emit SeasonWinners(
-            seasonHistory[season].first,
-            seasonHistory[season].seasonPoints[seasonHistory[season].first],
-            seasonHistory[season].second,
-            seasonHistory[season].seasonPoints[seasonHistory[season].second],
-            seasonHistory[season].third,
-            seasonHistory[season].seasonPoints[seasonHistory[season].third]
+            seasonHistory[season-1].first,
+            seasonHistory[season-1].seasonPoints[seasonHistory[season-1].first],
+            seasonHistory[season-1].second,
+            seasonHistory[season-1].seasonPoints[seasonHistory[season-1].second],
+            seasonHistory[season-1].third,
+            seasonHistory[season-1].seasonPoints[seasonHistory[season-1].third]
             );
     }
-
-
-
 }
