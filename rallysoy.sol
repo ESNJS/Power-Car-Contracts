@@ -100,6 +100,7 @@ contract RallySoy is INFT, Ownable{
     uint256 public end;           //When the season ends.
     uint256 public ticketBalance; //Balance from ticket sales
     uint256 public ticketPrice;   //Amount paid for racing (in WEI)
+    uint256 public seasonTicketShare; //Amount of tickets Earnings that goes to season jackpot
     address public car_address;
     uint256 public season;
     uint256 public rallyTotalEarnings;
@@ -388,9 +389,9 @@ contract RallySoy is INFT, Ownable{
         require(msg.value >= ticketPrice, "You should al least pay the ticket price");
         
         if(seasonHistory[season].seasonStarted){
-            seasonHistory[season].seasonBalance += ticketPrice/10;
-            ticketBalance += ticketPrice - ticketPrice/10;
-            rallyTotalEarnings += ticketPrice - ticketPrice/10;
+            seasonHistory[season].seasonBalance += ticketPrice/seasonTicketShare;
+            ticketBalance += ticketPrice - ticketPrice/seasonTicketShare;
+            rallyTotalEarnings += ticketPrice - ticketPrice/seasonTicketShare;
         }else{
             ticketBalance += ticketPrice;
             rallyTotalEarnings += ticketPrice;
@@ -408,9 +409,9 @@ contract RallySoy is INFT, Ownable{
         require(carState[carOne] == State.Set, "Your opponent is not ready to race");
         require(msg.value >= ticketPrice + rallies[carOne].raceBalance, "The bet should be equal to your opponenst bet plus ticket price");
         if(seasonHistory[season].seasonStarted){
-            seasonHistory[season].seasonBalance += ticketPrice/10;
-            ticketBalance += ticketPrice - ticketPrice/10;
-            rallyTotalEarnings += ticketPrice - ticketPrice/10;
+            seasonHistory[season].seasonBalance += ticketPrice/seasonTicketShare;
+            ticketBalance += ticketPrice - ticketPrice/seasonTicketShare;
+            rallyTotalEarnings += ticketPrice - ticketPrice/seasonTicketShare;
         }else{
             ticketBalance += ticketPrice;
             rallyTotalEarnings += ticketPrice;
@@ -450,7 +451,7 @@ contract RallySoy is INFT, Ownable{
         if(carOneTime > carTwoTime){ //CarTwo Wins
             racerBalance[carOwner(_carTwo)] += rallies[raceID].raceBalance;
             _winner = carOwner(_carTwo);
-            if(seasonHistory[season].seasonStarted && block.timestamp > end){
+            if(seasonHistory[season].seasonStarted && block.timestamp < end){
                 seasonHistory[season].seasonPoints[_carTwo] += 3;
                 sortWinner(_carTwo);
             }
@@ -459,7 +460,7 @@ contract RallySoy is INFT, Ownable{
         if(carOneTime < carTwoTime){ //CarTwo One
             racerBalance[carOwner(_carOne)] += rallies[raceID].raceBalance;
             _winner = carOwner(_carOne);
-            if(seasonHistory[season].seasonStarted && block.timestamp > end){
+            if(seasonHistory[season].seasonStarted && block.timestamp < end){
                 seasonHistory[season].seasonPoints[_carOne] += 3;
                 sortWinner(_carOne);
             }
@@ -469,7 +470,7 @@ contract RallySoy is INFT, Ownable{
         if(carOneTime == carTwoTime){ 
             racerBalance[carOwner(_carOne)] += rallies[raceID].raceBalance/2;
             racerBalance[carOwner(_carTwo)] += rallies[raceID].raceBalance/2;
-            if(seasonHistory[season].seasonStarted && block.timestamp > end){
+            if(seasonHistory[season].seasonStarted && block.timestamp < end){
                 seasonHistory[season].seasonPoints[_carOne] += 1;
                 seasonHistory[season].seasonPoints[_carTwo] += 1;
                 sortWinner(_carOne);
@@ -495,7 +496,7 @@ contract RallySoy is INFT, Ownable{
 
     function setTicketPrice (uint256 _amoutInWEI) internal {
         require(ownerOf(0) == msg.sender, "You are not the Rally Owner"); 
-        require(_amoutInWEI >= 50000000000000000000 && _amoutInWEI <= 100000000000000000000, "Price goes from 50 to 100");
+        require(_amoutInWEI >= 1000000000000000000 && _amoutInWEI <= 100000000000000000000, "Price goes from 1 to 100");
         ticketPrice = _amoutInWEI; //50000000000000000000
     }
 
@@ -533,16 +534,17 @@ contract RallySoy is INFT, Ownable{
         }
     }
 
-    function startSeason(uint256 _amoutInWEI) public{
+    function startSeason(uint256 _amoutInWEI, uint256 _share) public{
         require(ownerOf(0) == msg.sender, "You are not the Rally Owner"); 
         require(block.timestamp > end && !seasonHistory[season].seasonStarted);
+        require(_share == 1 || _share == 2 || _share == 10);
         end = block.timestamp + 7 days;
         setTicketPrice(_amoutInWEI);
         seasonHistory[season].seasonStarted = true;
+        seasonTicketShare = _share;
     }
 
     function endSeason() public{
-        require(ownerOf(0) == msg.sender, "You are not the Rally Owner"); 
         require(block.timestamp > end && seasonHistory[season].seasonStarted);
 
         racerBalance[carOwner(seasonHistory[season].first)] += seasonHistory[season].seasonBalance/2;
